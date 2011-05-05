@@ -1,68 +1,144 @@
 #!/bin/bash
 
-for d in chef dhcp; do lxc-stop -n $d; rm -rf /var/lib/lxc/$d; done
+# A simple deployment helper for OpenStack installations.
+# Brought to you by Rackspace Cloudbuilders.
+#
+# This script sets up two lxc containers.  The first of these is used to run
+# a Chef server.  The second runs a DHCP server.
+#
+# apt-cacher is used to keep from having to download apt packages remotely
+# each time a container is built.
+#
+# Before running this script you should have set up a bridged network.
+# Example, assuming wlan0 is your active interface:
+#    brctl addbr br0
+#    brctl setfd br0 0
+#    ifconfig br0 up IP.FROM.PRIMARY.WLAN0 promisc
+#    brctl addif br0 wlan0
+#    ifconfig wlan0 0.0.0.0 up
+#    route add -net default gw GATEWAY.FROM.NESTAT.-r br0
+#
+# Configuration is done via environment variables.  Listed are the variables
+# and their defaults:
+#
+#    DHCP_LOW=8.21.28.242
+#    DHCP_HIGH=8.21.28.250
+#    NETMASK=255.255.255.0
+#    GATEWAY=8.21.28.1
+#    CGROUP_DIR=/var/lib/cgroups
+#    MY_IP=(taken from br0 interface at runtime)
+#    chef_host=8.21.28.240
+#    dhcp_host=8.21.28.241
+#    SSH_ID=~/.ssh/id_builder
+#
+# This script performs the following actions:
+#    1) Setup this host
+#       a) cache apt packages
+#       b) generate a ssh key
+#       c) set up control group for lxc
+#    2) Create containers for required components
+#       a) Chef
+#       b) Dhcp/Pxe/Preseed
+#
+# TODO
+#    * Where does the 10.127.48.40 address for builder come from: not $dhcp_host
+#    * Stop catting the files out of a shell script.  This is a git repo.
+#    * Can we use knife to setup lxc containers?  Can spin up vms with it.
+#
+# For more information about OpenStack, see: http://www.openstack.org/
+# For more information about LXC containers, see: http://lxc.sourceforge.net/
+# For more information about Chef, see: http://www.opscode.com/chef/
 
-set -e
-set -x
+##
+## Configuration
+##
 
-DHCP_LOW=8.21.28.242
-DHCP_HIGH=8.21.28.250
+DHCP_LOW=${DHCP_LOW:-8.21.28.242}
+DHCP_HIGH=${DHCP_HIGH:-8.21.28.250}
 
 # can be calcualted
-NETMASK=255.255.255.0
-GATEWAY=8.21.28.1
+NETMASK=${NETMASK:-255.255.255.0}
+GATEWAY=${GATEWAY:-8.21.28.1}
+
+# these we should intuit
+chef_host=${chef_host:-8.21.28.240}
+dhcp_host=${dhcp_host:-8.21.28.241}
+
+# this is only created if a cgroup isn't already mounted
+CGROUP_DIR=${CGROUP_DIR:-/var/lib/cgroups}
 
 # broken!
 MY_IP=`/sbin/ifconfig br0 | grep "inet " | cut -d ':' -f2 | cut -d ' ' -f1`
 
-# these we should intuit
+SSH_ID=${SSH_ID:-~/.ssh/id_builder}
 
-chef_host=8.21.28.240
-dhcp_host=8.21.28.241
+##
+## Function definitions
+##
 
 function ssh_it {
-   ssh -i ~/.ssh/id_builder -o StrictHostKeyChecking=no $1 "$2"
+   ssh -i ${SSH_ID} -o StrictHostKeyChecking=no $1 "$2"
 }
 
+##
+## Configure runtime
+##
+
+# abort on command failure
+set -e
+
+# display conditions
+set -x
+
+##
+## BEGIN SCRIPT
+##
+
+# Remove stale containers
+for d in chef dhcp; do lxc-stop -n $d; rm -rf /var/lib/lxc/$d; done
+
+
+# Setup caching of apt packages
 if [ ! -x /usr/share/doc/apt-cacher ]; then
     apt-get install -y apt-cacher apache2
     sed -i -e 's/^#*AUTOSTART.*/AUTOSTART=1/' /etc/default/apt-cacher
     /etc/init.d/apt-cacher restart
 fi
 
+# Install pre-reqs
 apt-get install -y lxc debootstrap bridge-utils libcap2-bin dsh
 
+# Mount (maybe make) control group info
 if ( ! grep -q cgroup /etc/mtab ); then
-    mkdir -p /var/lib/cgroups
-    mount -t cgroup cgroup /var/lib/cgroups/
+    mkdir -p ${CGROUP_DIR} 
+    mount -t cgroup cgroup ${CGROUP_DIR}
 fi
 
+# Make container home
 mkdir -p /var/lib/lxc
 
+# Set up networking configuration (bridged veth)
 cat > /var/lib/lxc/builder.conf <<EOF
 lxc.network.type=veth
 lxc.network.link=br0
 lxc.network.flags=up
 EOF
 
-
-if [ ! -f ~/.ssh/id_builder.pub ]; then
-    ssh-keygen -d -P "" -f ~/.ssh/id_builder
+# Create a passwordless key to ssh into the containers
+if [ ! -f ${SSH_ID} ]; then
+    ssh-keygen -d -P "" -f ${SSH_ID}
 fi
 
+# Build ubuntu-styled containers with networking as configured above
+# assigning ip as configured (or defaulted) with CONTAINER_host variable
 for d in dhcp chef; do
     ROOTFS=/var/lib/lxc/${d}/rootfs
-
     if [ ! -x ${ROOTFS} ]; then
-	lxc-create -n ${d} -f /var/lib/lxc/builder.conf -t ubuntu
+        lxc-create -n ${d} -f /var/lib/lxc/builder.conf -t ubuntu
     fi
-
     var=\$${d}_host
     IP=`eval echo $var`
-
-    echo Setting ip of ${d} to ${IP}
-
-    # fix up the ip address
+    echo Setting ip of ${d} continer to ${IP}
     cat > ${ROOTFS}/etc/network/interfaces <<EOF
 auto lo
 iface lo inet loopback
@@ -74,12 +150,12 @@ iface eth0 inet static
       gateway $GATEWAY
 EOF
 
-    # set up a sane ubuntu repo
+    # set up a sane ubuntu repo in the container
     cat > ${ROOTFS}/etc/apt/sources.list <<EOF
 deb http://$MY_IP:3142/mirrors.us.kernel.org/ubuntu maverick main universe
 EOF
 
-    # working resolver
+    # working resolver in the container (Google's DNS)
     rm -f ${ROOTFS}/etc/resolv.conf
     cat > ${ROOTFS}/etc/resolv.conf <<EOF
 nameserver 8.8.8.8
@@ -88,36 +164,41 @@ EOF
     # drop the builder ssh key in
     mkdir -p ${ROOTFS}/root/.ssh
     chmod 700 ${ROOTFS}/root/.ssh
-    cp ~/.ssh/id_builder.pub ${ROOTFS}/root/.ssh/authorized_keys
+    cp ${SSH_ID}.pub ${ROOTFS}/root/.ssh/authorized_keys
     chmod 600 ${ROOTFS}/root/.ssh/authorized_keys
 
-
+	# NOTE(todd): I don't know what this is?!
     if [ ! -f /etc/dsh-builder.conf ]; then
-	touch /etc/dsh-builder.conf
-	chmod 600 /etc/dsh-builder.conf
+        touch /etc/dsh-builder.conf
+        chmod 600 /etc/dsh-builder.conf
     fi
 
     if ( ! grep -q ${IP} /etc/dsh-builder.conf ); then
-	echo $USER@$IP >> /etc/dsh-builder.conf
+        echo $USER@$IP >> /etc/dsh-builder.conf
     fi
 
-    # add keyring
-
+	# Let root ssh into the continers using a key
     sed -i -e 's/^#*PermitRoot.*/PermitRootLogin without-password/' ${ROOTFS}/etc/ssh/sshd_config
+
+	# Start the container
     lxc-start -dn ${d}
 
     # Wait for machine to come up
-    if( ! ping -W10 -c1 $IP ); then
-	echo "Can't start server.  Bad."
-	exit 1
+    if ( ! ping -W10 -c1 $IP ); then
+        echo "Can't start server.  Bad."
+        exit 1
     fi
 
+	# Install packages common to each container
     ssh_it "root@${IP} apt-get update"
     ssh_it "root@${IP} apt-get install -y --force-yes ubuntu-keyring netbase gnupg"
     ssh_it "root@${IP} apt-get update"
+
+	# TODO(todd): see if this should include lxcguest
 done
 
 
+# Install packages on the chef host.
 ssh_it "root@${chef_host}" "apt-get install -y ruby ruby-dev libopenssl-ruby rdoc ri irb build-essential wget ssl-cert rubygems"
 ssh_it "root@${chef_host}" "gem install chef -y --no-ri --no-rdoc"
 
@@ -195,7 +276,7 @@ LABEL maverick
 EOF
 
 mkdir -p ${ROOTFS}/var/lib/builder/www
-cp ~/id_builder.pub ${ROOTFS}/var/lib/builder/www/id_dsa.pub
+cp ${SSH_ID}.pub ${ROOTFS}/var/lib/builder/www/id_dsa.pub
 cat > ${ROOTFS}/var/lib/builder/www/preseed.txt <<EOF
 d-i pkgsel/install-language-support boolean false
 d-i debian-installer/locale string en_US
