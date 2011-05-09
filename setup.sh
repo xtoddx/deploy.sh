@@ -4,7 +4,7 @@
 # Brought to you by Rackspace Cloudbuilders.
 #
 # This script sets up two lxc containers.  The first of these is used to run
-# a Chef server.  The second runs a DHCP server.
+# a Chef server.  The second runs a DHCP/preseed server.
 #
 # apt-cacher is used to keep from having to download apt packages remotely
 # each time a container is built.
@@ -30,6 +30,7 @@
 #    chef_host=8.21.28.240
 #    dhcp_host=8.21.28.241
 #    SSH_ID=~/.ssh/id_builder
+#    TEMPLATE=ubuntu
 #
 # This script performs the following actions:
 #    1) Setup this host
@@ -71,6 +72,7 @@ CGROUP_DIR=${CGROUP_DIR:-/var/lib/cgroups}
 MY_IP=`/sbin/ifconfig br0 | grep "inet " | cut -d ':' -f2 | cut -d ' ' -f1`
 
 SSH_ID=${SSH_ID:-~/.ssh/id_builder}
+TEMPLATE=${TEMPLATE:-ubuntu}
 
 ##
 ## Function definitions
@@ -134,7 +136,7 @@ fi
 for d in dhcp chef; do
     ROOTFS=/var/lib/lxc/${d}/rootfs
     if [ ! -x ${ROOTFS} ]; then
-        lxc-create -n ${d} -f /var/lib/lxc/builder.conf -t ubuntu
+        lxc-create -n ${d} -f /var/lib/lxc/builder.conf -t ${TEMPLATE}
     fi
     var=\$${d}_host
     IP=`eval echo $var`
