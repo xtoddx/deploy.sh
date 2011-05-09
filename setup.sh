@@ -3,6 +3,8 @@
 # A simple deployment helper for OpenStack installations.
 # Brought to you by Rackspace Cloudbuilders.
 #
+# This script must be run as root.
+#
 # This script sets up two lxc containers.  The first of these is used to run
 # a Chef server.  The second runs a DHCP/preseed server.
 #
@@ -31,6 +33,9 @@
 #    dhcp_host=8.21.28.241
 #    SSH_ID=~/.ssh/id_builder
 #    TEMPLATE=ubuntu
+#
+# You may also want to change the root password that gets set by editing
+# assets/preseed.txt
 #
 # This script performs the following actions:
 #    1) Setup this host
@@ -121,7 +126,7 @@ fi
 mkdir -p /var/lib/lxc
 
 # Set up networking configuration (bridged veth)
-cp ${ASSETS}/builder.conf /var/lib/builder.conf
+cp ${ASSETS}/builder.conf /var/lib/lxc/builder.conf
 
 # Create a passwordless key to ssh into the containers
 if [ ! -f ${SSH_ID} ]; then
