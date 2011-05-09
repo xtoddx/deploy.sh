@@ -1,0 +1,14 @@
+{
+	"bootstrap": {
+		"chef": {
+			"url_type": "http",
+			"init_style": "runit",
+			"path": "/srv/chef",
+			"serve_path": "/srv/chef",
+			"server_fqdn": "chef.{DOMAIN}",
+			"webui_enabled": true
+		}
+	},
+	"run_list": [ "recipe[chef::bootstrap_server]" ]
+}
+
