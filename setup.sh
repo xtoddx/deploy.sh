@@ -45,6 +45,7 @@
 #    * Where does the 10.127.48.40 address for builder come from: not $dhcp_host
 #    * Stop catting the files out of a shell script.  This is a git repo.
 #    * Can we use knife to setup lxc containers?  Can spin up vms with it.
+#    * lvmok, primary, bootable variables used in preseed.conf generation
 #
 # For more information about OpenStack, see: http://www.openstack.org/
 # For more information about LXC containers, see: http://lxc.sourceforge.net/
@@ -92,6 +93,8 @@ set -e
 # display conditions
 set -x
 
+ASSETS=`dirname $0`/assets
+
 ##
 ## BEGIN SCRIPT
 ##
@@ -120,11 +123,7 @@ fi
 mkdir -p /var/lib/lxc
 
 # Set up networking configuration (bridged veth)
-cat > /var/lib/lxc/builder.conf <<EOF
-lxc.network.type=veth
-lxc.network.link=br0
-lxc.network.flags=up
-EOF
+cp ${ASSETS}/builder.conf /var/lib/builder.conf
 
 # Create a passwordless key to ssh into the containers
 if [ ! -f ${SSH_ID} ]; then
@@ -159,9 +158,7 @@ EOF
 
     # working resolver in the container (Google's DNS)
     rm -f ${ROOTFS}/etc/resolv.conf
-    cat > ${ROOTFS}/etc/resolv.conf <<EOF
-nameserver 8.8.8.8
-EOF
+	cp ${ASSETS}/resolv.conf ${ROOTFS}/etc/resolv.conf
 
     # drop the builder ssh key in
     mkdir -p ${ROOTFS}/root/.ssh
@@ -205,11 +202,6 @@ ssh_it "root@${chef_host}" "apt-get install -y ruby ruby-dev libopenssl-ruby rdo
 ssh_it "root@${chef_host}" "gem install chef -y --no-ri --no-rdoc"
 
 TMPDIR=`mktemp -d`
-cat > ${TMPDIR}/solo.rb <<EOF
-file_cache_path "/tmp/chef-solo"
-cookbook_path "/tmp/chef-solo/cookbooks"
-recipe_url "http://s3.amazonaws.com/chef-solo/bootstrap-latest.tar.gz"
-EOF
 
 cat > ${TMPDIR}/chef.json <<EOF
 {
@@ -228,7 +220,7 @@ cat > ${TMPDIR}/chef.json <<EOF
 EOF
 
 mkdir -p /var/lib/lxc/chef/rootfs/etc/chef
-cp ${TMPDIR}/solo.rb /var/lib/lxc/chef/rootfs/etc/chef/
+cp ${ASSETS}/solo.rb /var/lib/lxc/chef/rootfs/etc/chef/
 cp ${TMPDIR}/chef.json /var/lib/lxc/chef/rootfs/etc/chef/chef-bootstrap.json
 
 if [ "${TMPDIR}" = "" ]; then
@@ -354,16 +346,4 @@ d-i preseed/late_command string in-target mkdir -p /root/.ssh; in-target chmod 7
 EOF
 
 mkdir -p ${ROOTFS}/etc/nginx/sites-enabled
-cat > ${ROOTFS}/etc/nginx/sites-enabled/default <<EOF
-server {
-  listen   80; ## listen for ipv4
-
-  server_name  localhost;
-
-  access_log  /var/log/nginx/localhost.access.log;
-
-  location / {
-    root   /var/lib/builder/www;
-  }
-}
-EOF
+cp ${ASSETS}/nginx.conf ${ROOTFS}/etc/nginx/sites-enabled/default
