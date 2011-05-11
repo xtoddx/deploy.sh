@@ -12,13 +12,24 @@
 # each time a container is built.
 #
 # Before running this script you should have set up a bridged network.
-# Example, assuming wlan0 is your active interface:
+# Example, assuming eth0 is your active interface:
 #    brctl addbr br0
 #    brctl setfd br0 0
-#    ifconfig br0 up IP.FROM.PRIMARY.WLAN0 promisc
-#    brctl addif br0 wlan0
-#    ifconfig wlan0 0.0.0.0 up
+#    ifconfig br0 up IP.FROM.PRIMARY.ETH0 promisc
+#    brctl addif br0 eth0
+#    ifconfig eth0 0.0.0.0 up
 #    route add -net default gw GATEWAY.FROM.NESTAT.-r br0
+#
+# Wireless networks take a bit different approach, in which you create a bridge
+# and use masqurading to forward through your wireless interface.
+#    brctl addbr br0
+#    brctl setfd br0 0
+#    ifconfig br0 up 10.5.5.5
+#    brctl stp br0 off
+#    iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
+#    echo 1 > /proc/sys/net/ipv4/ip_forward
+# (make sure your containers are in the 10.5.5.0/32 range)
+# (taken from http://box.matto.nl/lxconlaptop.html)
 #
 # Configuration is done via environment variables.  Listed are the variables
 # and their defaults:
