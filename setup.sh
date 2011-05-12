@@ -25,11 +25,11 @@
 #    brctl addbr br0
 #    brctl setfd br0 0
 #    ifconfig br0 up 10.5.5.5
-#    brctl stp br0 off
+#    brctl stp br0 no
 #    iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
 #    echo 1 > /proc/sys/net/ipv4/ip_forward
-# (make sure your containers are in the 10.5.5.0/32 range)
 # (taken from http://box.matto.nl/lxconlaptop.html)
+# My command looks like this: TEMPLATE=natty dhcp_host=10.5.5.6 chef_host=10.5.5.7 DHCP_LOW=10.5.5.10 DHCP_HIGH=10.5.5.80 GATEWAY=10.5.5.5 ./setup.sh
 #
 # Configuration is done via environment variables.  Listed are the variables
 # and their defaults:
@@ -160,8 +160,8 @@ for d in dhcp chef; do
                              > ${ROOTFS}/etc/network/interfaces
 
     # set up a sane ubuntu repo in the container
-    cat ${ASSETS}/sources.list | sed -e "s^{IP}^${MY_IP}^" \
-                               > ${ROOTFS}/etc/apt/sources.list
+#    cat ${ASSETS}/sources.list | sed -e "s^{IP}^${MY_IP}^" \
+#                               > ${ROOTFS}/etc/apt/sources.list
 
     # working resolver in the container (Google's DNS)
     rm -f ${ROOTFS}/etc/resolv.conf
@@ -190,7 +190,7 @@ for d in dhcp chef; do
     lxc-start -dn ${d}
 
     # Wait for machine to come up
-    if ( ! ping -W10 -c1 $IP ); then
+    if ( ! ping -W30 -c1 $IP ); then
         echo "Can't start server.  Bad."
         exit 1
     fi
@@ -205,22 +205,23 @@ done
 
 
 # Install packages on the chef host.
-ssh_it "root@${chef_host}" "apt-get install -y ruby ruby-dev libopenssl-ruby rdoc ri irb build-essential wget ssl-cert rubygems"
+ssh_it "root@${chef_host}" "apt-get install -y ruby ruby-dev libopenssl-ruby rdoc ri irb build-essential wget ssl-cert rubygems curl"
 ssh_it "root@${chef_host}" "gem install chef -y --no-ri --no-rdoc"
 
-domain=`hostname -d`
+domain=${domain:-`hostname -d`}
 mkdir -p /var/lib/lxc/chef/rootfs/etc/chef
 cp ${ASSETS}/solo.rb /var/lib/lxc/chef/rootfs/etc/chef/
-cat ${ASSETS}/chef.json | sed -e "s^{DOMAIN}^${domain}%" \
+cat ${ASSETS}/chef.json | sed -e "s^{DOMAIN}^${domain}^" \
                         > /var/lib/lxc/chef/rootfs/etc/chef/chef-bootstrap.json
 
+ssh_it "root@${chef_host}" "ln -s /var/lib/gems/1.8/bin/knife /usr/bin/"
+ssh_it "root@${chef_host}" "ln -s /var/lib/gems/1.8/bin/chef-solr-installer /usr/bin/"
 ssh_it "root@${chef_host}" "/var/lib/gems/1.8/bin/chef-solo -c /etc/chef/solo.rb -j /etc/chef/chef-bootstrap.json -r http://s3.amazonaws.com/chef-solo/bootstrap-latest.tar.gz"
 
 # push up the cookbooks
 
 ssh_it "root@${chef_host}" "apt-get install -y git-core"
 ssh_it "root@${chef_host}" "cd /root; git clone https://github.com/openstack/openstack-cookbooks.git"
-ssh_it "root@${chef_host}" "ln -s /var/lib/gems/1.8/bin/knife /usr/bin/"
 ssh_it "root@${chef_host}" "knife configure -i -y --defaults -r='' -u openstack"
 ssh_it "root@${chef_host}" "knife cookbook upload -o /root/openstack-cookbooks/cookbooks -a"
 
