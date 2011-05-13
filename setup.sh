@@ -251,5 +251,5 @@ cp ${SSH_ID}.pub ${ROOTFS}/var/lib/builder/www/id_dsa.pub
 cat ${ASSETS}/preseed.txt | sed -e "s^{IP}^${MY_IP}^" \
                           > ${ROOTFS}/var/lib/builder/www/preseed.txt
 
-mkdir -p ${ROOTFS}/etc/nginx/sites-enabled
-cp ${ASSETS}/nginx.conf ${ROOTFS}/etc/nginx/sites-enabled/default
+mkdir -p ${ROOTFS}/etc/nginx/sites-available
+cp ${ASSETS}/nginx.conf ${ROOTFS}/etc/nginx/sites-available/default
