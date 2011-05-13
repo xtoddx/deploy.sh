@@ -9,7 +9,7 @@
 # a Chef server.  The second runs a DHCP/preseed server.
 #
 # apt-cacher is used to keep from having to download apt packages remotely
-# each time a container is built.
+# each time a container is built.  Enable with USE_APT_CACHER=1.
 #
 # Before running this script you should have set up a bridged network.
 # Example, assuming eth0 is your active interface:
@@ -38,19 +38,21 @@
 #    DHCP_HIGH=8.21.28.250
 #    NETMASK=255.255.255.0
 #    GATEWAY=8.21.28.1
+#    domain=`hostname -d`
 #    CGROUP_DIR=/var/lib/cgroups
 #    MY_IP=(taken from br0 interface at runtime)
 #    chef_host=8.21.28.240
 #    dhcp_host=8.21.28.241
 #    SSH_ID=~/.ssh/id_builder
 #    TEMPLATE=ubuntu
+#    USE_APT_CACHER=0
 #
 # You may also want to change the root password that gets set by editing
 # assets/preseed.txt
 #
 # This script performs the following actions:
 #    1) Setup this host
-#       a) cache apt packages
+#       a) cache apt packages (optional)
 #       b) generate a ssh key
 #       c) set up control group for lxc
 #    2) Create containers for required components
@@ -88,6 +90,8 @@ MY_IP=`/sbin/ifconfig br0 | grep "inet " | cut -d ':' -f2 | cut -d ' ' -f1`
 
 SSH_ID=${SSH_ID:-~/.ssh/id_builder}
 TEMPLATE=${TEMPLATE:-ubuntu}
+USE_APT_CACHER=${USE_APT_CACHER:-0}
+domain=${domain:-`hostname -d`}
 
 ##
 ## Function definitions
@@ -118,7 +122,7 @@ for d in chef dhcp; do lxc-stop -n $d; rm -rf /var/lib/lxc/$d; done
 
 
 # Setup caching of apt packages
-if [ ! -x /usr/share/doc/apt-cacher ]; then
+if [ ! -x /usr/share/doc/apt-cacher -a "${USE_APT_CACHER}" -eq 1 ]; then
     apt-get install -y apt-cacher apache2
     sed -i -e 's/^#*AUTOSTART.*/AUTOSTART=1/' /etc/default/apt-cacher
     /etc/init.d/apt-cacher restart
@@ -160,8 +164,10 @@ for d in dhcp chef; do
                              > ${ROOTFS}/etc/network/interfaces
 
     # set up a sane ubuntu repo in the container
-#    cat ${ASSETS}/sources.list | sed -e "s^{IP}^${MY_IP}^" \
-#                               > ${ROOTFS}/etc/apt/sources.list
+	if [ "${USE_APT_CACHER}" == "1" ] ; then
+        cat ${ASSETS}/sources.list | sed -e "s^{IP}^${MY_IP}^" \
+                                   > ${ROOTFS}/etc/apt/sources.list
+	fi
 
     # working resolver in the container (Google's DNS)
     rm -f ${ROOTFS}/etc/resolv.conf
@@ -208,7 +214,6 @@ done
 ssh_it "root@${chef_host}" "apt-get install -y ruby ruby-dev libopenssl-ruby rdoc ri irb build-essential wget ssl-cert rubygems curl"
 ssh_it "root@${chef_host}" "gem install chef -y --no-ri --no-rdoc"
 
-domain=${domain:-`hostname -d`}
 mkdir -p /var/lib/lxc/chef/rootfs/etc/chef
 cp ${ASSETS}/solo.rb /var/lib/lxc/chef/rootfs/etc/chef/
 cat ${ASSETS}/chef.json | sed -e "s^{DOMAIN}^${domain}^" \
